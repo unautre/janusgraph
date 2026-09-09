@@ -342,6 +342,98 @@ on how to increase the refresh interval and its impact on write
 performance. Note, that a higher refresh interval means that it takes a
 longer time for graph mutations to be available in the index.
 
+### Reindex Optimization
+
+Mixed-index reindex jobs can batch more documents per backend restore call than
+the regular storage scan page size. This allows Elasticsearch to use larger bulk
+requests during `SchemaAction.REINDEX` without changing `storage.page-size` for
+other graph operations.
+
+```properties
+schema.reindex.mixed-index-batch-enabled = true
+schema.reindex.mixed-index-batch-size = 1000
+```
+
+Increase `schema.reindex.mixed-index-batch-size` when Elasticsearch can handle
+larger bulk requests and JanusGraph workers have enough memory for the queued
+documents. Set `schema.reindex.mixed-index-batch-enabled` to `false` to keep
+the previous storage-page-sized reindex batches.
+
+#### Tuning the reindex throughput
+
+The reindex job accumulates restored documents in memory and flushes them to
+Elasticsearch in a single bulk (`_bulk`) request per worker once the batch size
+is reached, so three settings determine reindex throughput:
+
+-   **Batch size** (`schema.reindex.mixed-index-batch-size`). A larger batch
+    sends fewer, larger bulk requests, which reduces the number of HTTP
+    round-trips, transaction commits and management-system reads per reindexed
+    element. The gains are largest going from the storage page size (the
+    pre-batching default, e.g. 100) up to roughly one or a few thousand
+    documents, and then taper off. Remember that a worker buffers up to
+    `mixed-index-batch-size` documents in memory, and a reindex runs several
+    workers in parallel, so peak heap usage grows with
+    `mixed-index-batch-size` × reindex-threads × average-document-size — keep
+    the default modest and raise it only when documents are small and workers
+    have headroom.
+-   **Reindex threads.** `updateIndex(index, SchemaAction.REINDEX)` uses
+    `Runtime.getRuntime().availableProcessors()` worker threads by default; pass
+    an explicit count with `updateIndex(index, SchemaAction.REINDEX, threads)`.
+    More threads issue more concurrent bulk requests and scale best when the
+    Elasticsearch index has multiple shards spread across data nodes.
+-   **Bulk refresh** (`index.[X].bulk-refresh`). With the default value `false`
+    a reindex is throughput-bound. If it is set to `wait_for` (or `true`) every
+    bulk request blocks until the next index refresh, which can dominate the
+    total reindex time; in that mode batching helps the most, because it
+    proportionally reduces the number of refresh waits. For the fastest reindex
+    keep `bulk-refresh = false` and rely on the index becoming searchable at the
+    next periodic refresh once the job completes.
+
+#### When the storage scan, not Elasticsearch, is the ceiling
+
+On the CQL backend the reindex pipeline is often **storage-scan-bound**, not
+Elasticsearch-bound: the scan job streams the whole table through a small,
+fixed number of scan queries (one per slice query — three for a vertex mixed
+index), and the reindex worker threads spend most of their time waiting for
+rows. The telltale signs are low Elasticsearch CPU, only a handful of reindex
+workers reporting activity regardless of the configured thread count, and the
+scan progress log (`StandardScannerExecutor`) showing a near-empty row queue.
+
+Three CQL options remove that ceiling:
+
+```properties
+# Scan each Murmur3 token range on its own pipeline (true parallel scan).
+storage.cql.parallel-scan-token-ranges = 8
+
+# Bigger pages for full scans only (OLTP reads keep storage.page-size).
+storage.cql.scan-page-size = 2000
+
+# Stop scan queries server-side at each row's per-key limit (default true).
+storage.cql.scan-per-partition-limit-enabled = true
+```
+
+-   **`parallel-scan-token-ranges`** splits the scan into disjoint token
+    ranges, each drained by its own data-puller threads and merged
+    independently — producer throughput scales roughly linearly until the
+    Cassandra cluster saturates. Start with a small multiple of the cluster's
+    node count and watch node load.
+-   **`scan-page-size`** decouples the scan fetch size from the OLTP-oriented
+    `storage.page-size`; a few thousand rows per page is usually a safe and
+    substantial improvement. Pages are additionally prefetched one ahead, so
+    the network wait overlaps row processing.
+-   **`scan-per-partition-limit-enabled`** pushes each scan query's per-key
+    limit into the query as `PER PARTITION LIMIT`. The scan's key-existence
+    (grounding) query has a per-key limit of 1, so on graphs with wide rows
+    (many edges or properties per vertex) this stops the grounding query from
+    streaming the entire table to the client just to prove each key exists.
+    On a CQL-compatible service without `PER PARTITION LIMIT` support the
+    pushdown auto-disables with a warning at store open.
+
+The scan-side and Elasticsearch-side settings compose: once the storage scan is
+parallel, raise the reindex thread count and, if Elasticsearch becomes the new
+bottleneck, scale its side (shards, replicas during rebuild, refresh interval)
+as described above.
+
 ### Further Reading
 
 -   Please refer to the [Elasticsearch homepage](https://www.elastic.co)

@@ -47,12 +47,8 @@
     <distributionManagement>
         <snapshotRepository>
             <id>ossrh</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
         </snapshotRepository>
-        <repository>
-            <id>ossrh</id>
-            <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-        </repository>
     </distributionManagement>
     <properties>
         <titan.compatible-versions>1.0.0,1.1.0-SNAPSHOT</titan.compatible-versions>
@@ -62,7 +58,7 @@
         <junit.version>5.11.0</junit.version>
         <mockito.version>4.11.0</mockito.version>
         <jamm.version>0.3.3</jamm.version>
-        <metrics.version>4.2.27</metrics.version>
+        <metrics.version>4.2.37</metrics.version>
         <slf4j.version>1.7.36</slf4j.version>
         <logback.version>1.2.13</logback.version>
         <httpcomponents.httpclient.version>4.5.14</httpcomponents.httpclient.version>
@@ -74,11 +70,11 @@
         <!-- align with org.apache.spark:spark-core_2.12 -->
         <jackson2.version>2.17.2</jackson2.version>
         <lucene-solr.version>8.11.3</lucene-solr.version>
-        <elasticsearch.version>8.15.3</elasticsearch.version>
+        <elasticsearch.version>9.0.3</elasticsearch.version>
         <commons.beanutils.version>1.9.4</commons.beanutils.version>
         <commons.collections.version>3.2.2</commons.collections.version>
         <zookeeper.version>3.9.2</zookeeper.version>
-        <netty4.version>4.1.115.Final</netty4.version>
+        <netty4.version>4.1.118.Final</netty4.version>
         <jna.version>5.14.0</jna.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -97,15 +93,18 @@
         <compiler.target>1.8</compiler.target>
         <test.excluded.groups>MEMORY_TESTS,PERFORMANCE_TESTS,BRITTLE_TESTS</test.excluded.groups>
         <dependency.locations.enabled>false</dependency.locations.enabled>
-        <cassandra.version>3.11.10</cassandra.version>
-        <!-- When this version updated please also update sha256 -->
+        <!-- Cassandra version bundled into the pre-packaged distribution. Must stay on a
+             release that supports Java 8, since the distribution is built/run on Java 8
+             (see ci-publish-official.yml and getting-started/installation.md). Cassandra 5.0
+             requires Java 11+, so it is supported/tested as a backend but not bundled here.
+             When this version is updated please also update sha256 -->
         <!-- https://downloads.apache.org/cassandra/4.0.6/apache-cassandra-4.0.6-bin.tar.gz.sha256 -->
         <cassandra-dist.version>4.0.6</cassandra-dist.version>
         <cassandra-dist.version.sha256>86d14a8e158e4e8554388b1aab598efcb879ddb09c480edecabb3c350b58fe6b</cassandra-dist.version.sha256>
-        <cassandra-driver.version>4.17.0</cassandra-driver.version>
-        <scylla-driver.version>4.18.0.1</scylla-driver.version>
+        <cassandra-driver.version>4.19.3</cassandra-driver.version>
+        <scylla-driver.version>4.19.0.9</scylla-driver.version>
         <scylladb.version>6.2.0</scylladb.version>
-        <testcontainers.version>1.20.1</testcontainers.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
         <easymock.version>5.4.0</easymock.version>
         <protobuf.version>3.25.5</protobuf.version>
         <grpc.version>1.66.0</grpc.version>
@@ -114,12 +113,14 @@
         <jcabi.version>2.1.0</jcabi.version>
         <jmh.version>1.33</jmh.version>
         <!-- align with org.apache.solr:solr-solrj -->
-        <jetty.version>9.4.55.v20240627</jetty.version>
+        <jetty.version>9.4.56.v20240826</jetty.version>
         <log4j2.version>2.23.1</log4j2.version>
         <graalvm-nativeimage.version>24.0.2</graalvm-nativeimage.version>
         <caffeine.version>2.9.3</caffeine.version>
         <checker-qual.version>3.46.0</checker-qual.version>
         <curator.version>5.7.0</curator.version>
+        <autoPublish>false</autoPublish>
+        <waitUntil>validated</waitUntil>
     </properties>
     <modules>
         <module>janusgraph-grpc</module>
@@ -138,6 +139,7 @@
         <module>janusgraph-bigtable</module>
         <module>janusgraph-es</module>
         <module>janusgraph-lucene</module>
+        <module>janusgraph-cdc</module>
         <module>janusgraph-all</module>
         <module>janusgraph-dist</module>
         <module>janusgraph-benchmark</module>
@@ -379,10 +381,9 @@
                     <configuration>
                         <source>${compiler.source}</source>
                         <target>${compiler.target}</target>
-                        <compilerArguments>
-                            <Xmaxerrs>500</Xmaxerrs>
-                        </compilerArguments>
                         <compilerArgs>
+                            <arg>-Xmaxerrs</arg>
+                            <arg>500</arg>
                             <arg>-Xlint:unchecked</arg>
                         </compilerArgs>
                     </configuration>
@@ -639,12 +640,12 @@
             <dependency>
                 <groupId>org.ow2.asm</groupId>
                 <artifactId>asm</artifactId>
-                <version>9.7</version>
+                <version>9.7.1</version>
             </dependency>
             <dependency>
                 <groupId>org.ow2.asm</groupId>
                 <artifactId>asm-commons</artifactId>
-                <version>9.7</version>
+                <version>9.7.1</version>
             </dependency>
 
             <!-- Jackson 2.x -->
@@ -697,7 +698,7 @@
             <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-lang3</artifactId>
-                <version>3.16.0</version>
+                <version>3.18.0</version>
             </dependency>
             <dependency>
                 <groupId>commons-configuration</groupId>
@@ -955,12 +956,12 @@
             <dependency>
                 <groupId>commons-codec</groupId>
                 <artifactId>commons-codec</artifactId>
-                <version>1.17.1</version>
+                <version>1.22.0</version>
             </dependency>
             <dependency>
                 <groupId>commons-cli</groupId>
                 <artifactId>commons-cli</artifactId>
-                <version>1.9.0</version>
+                <version>1.11.0</version>
             </dependency>
 
             <!-- Spatial4j -->
@@ -1010,7 +1011,7 @@
             <dependency>
                 <groupId>commons-io</groupId>
                 <artifactId>commons-io</artifactId>
-                <version>2.16.1</version>
+                <version>2.22.0</version>
             </dependency>
             <dependency>
                 <groupId>org.jacoco</groupId>
@@ -1060,7 +1061,7 @@
             <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-compress</artifactId>
-                <version>1.26.2</version>
+                <version>1.28.0</version>
             </dependency>
             <dependency>
                 <groupId>com.google.protobuf</groupId>
@@ -1139,12 +1140,12 @@
             </dependency>
             <dependency>
                 <groupId>org.testcontainers</groupId>
-                <artifactId>elasticsearch</artifactId>
+                <artifactId>testcontainers-elasticsearch</artifactId>
                 <version>${testcontainers.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.testcontainers</groupId>
-                <artifactId>cassandra</artifactId>
+                <artifactId>testcontainers-cassandra</artifactId>
                 <version>${testcontainers.version}</version>
                 <exclusions>
                     <exclusion>
@@ -1155,12 +1156,12 @@
             </dependency>
             <dependency>
                 <groupId>org.testcontainers</groupId>
-                <artifactId>solr</artifactId>
+                <artifactId>testcontainers-solr</artifactId>
                 <version>${testcontainers.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.testcontainers</groupId>
-                <artifactId>junit-jupiter</artifactId>
+                <artifactId>testcontainers-junit-jupiter</artifactId>
                 <version>${testcontainers.version}</version>
             </dependency>
             <dependency>
@@ -1191,7 +1192,7 @@
             <dependency>
                 <groupId>com.nimbusds</groupId>
                 <artifactId>nimbus-jose-jwt</artifactId>
-                <version>9.37.3</version>
+                <version>10.4.2</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.commons</groupId>
@@ -1430,11 +1431,6 @@
                 </exclusions>
             </dependency>
             <dependency>
-                <groupId>io.netty</groupId>
-                <artifactId>netty-transport-native-epoll</artifactId>
-                <version>${netty4.version}</version>
-            </dependency>
-            <dependency>
                 <groupId>org.codehaus.woodstox</groupId>
                 <artifactId>stax2-api</artifactId>
                 <version>4.2.2</version>
@@ -1550,24 +1546,17 @@
                             </execution>
                         </executions>
                     </plugin>
-                </plugins>
-            </build>
-        </profile>
-
-        <profile>
-            <id>janusgraph-commit-release</id>
-            <build>
-                <plugins>
                     <plugin>
-                        <groupId>org.sonatype.plugins</groupId>
-                        <artifactId>nexus-staging-maven-plugin</artifactId>
-                        <version>1.7.0</version>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.8.0</version>
                         <extensions>true</extensions>
                         <configuration>
-                            <!-- The Base URL of Nexus instance where we want to stage -->
-                            <nexusUrl>https://oss.sonatype.org</nexusUrl>
                             <!-- The server "id" element from settings to use authentication from -->
-                            <serverId>ossrh</serverId>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>${autoPublish}</autoPublish>
+                            <waitUntil>${waitUntil}</waitUntil>
+                            <waitMaxTime>3600</waitMaxTime>
                         </configuration>
                     </plugin>
                 </plugins>

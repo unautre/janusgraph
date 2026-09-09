@@ -181,6 +181,20 @@ public class IndexSerializer {
         return true;
     }
 
+    public boolean allMixedIndexBackendSupportsOrderingListProperty() {
+        if (mixedIndexes.isEmpty()) {
+            return false;
+        }
+        for (Map.Entry<String, ? extends IndexInformation> entry : mixedIndexes.entrySet()) {
+            // if any of the mixed index backends does not support ordering list property, let's return false
+            if (!entry.getValue().getFeatures().supportsOrderingListProperty()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public IndexFeatures features(final MixedIndexType index) {
         return getMixedIndex(index).getFeatures();
     }
@@ -318,7 +332,7 @@ public class IndexSerializer {
     }
 
     public void removeElement(Object elementId, MixedIndexType index, Map<String,Map<String,List<IndexEntry>>> documentsPerStore) {
-        Preconditions.checkArgument((index.getElement()==ElementCategory.VERTEX && elementId instanceof Long) ||
+        Preconditions.checkArgument((index.getElement()==ElementCategory.VERTEX && (elementId instanceof Long || elementId instanceof String)) ||
             (index.getElement().isRelation() && elementId instanceof RelationIdentifier),"Invalid element id [%s] provided for index: %s",elementId,index);
         getDocuments(documentsPerStore,index).put(element2String(elementId),new ArrayList<>());
     }

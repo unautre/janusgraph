@@ -27,7 +27,7 @@ All currently supported versions of JanusGraph are listed below.
 
 | JanusGraph | Storage Version | Cassandra | HBase | Bigtable | ScyllaDB | Elasticsearch | Solr | TinkerPop | Spark | Scala |
 | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
-| 1.2.z | 2 | 3.11.z, 4.0.z | 2.6.z | 1.3.0, 1.4.0, 1.5.z, 1.6.z, 1.7.z, 1.8.z, 1.9.z, 1.10.z, 1.11.z, 1.14.z | 6.y | 6.y, 7.y, 8.y | 8.y | 3.7.z | 3.2.z | 2.12.z |
+| 1.2.z | 2 | 3.11.z, 4.0.z, 5.0.z | 2.6.z | 1.3.0, 1.4.0, 1.5.z, 1.6.z, 1.7.z, 1.8.z, 1.9.z, 1.10.z, 1.11.z, 1.14.z | 6.y | 6.y, 7.y, 8.y, 9.y | 8.y | 3.7.z | 3.2.z | 2.12.z |
 | 1.1.z | 2 | 3.11.z, 4.0.z | 2.6.z | 1.3.0, 1.4.0, 1.5.z, 1.6.z, 1.7.z, 1.8.z, 1.9.z, 1.10.z, 1.11.z, 1.14.z | 6.y | 6.y, 7.y, 8.y | 8.y | 3.7.z | 3.2.z | 2.12.z |
 
 !!! info
@@ -71,11 +71,11 @@ compile "org.janusgraph:janusgraph-core:1.2.0"
 
 **Tested Compatibility:**
 
-* Apache Cassandra 3.11.10, 4.0.6
+* Apache Cassandra 3.11.10, 4.0.6, 5.0.8
 * Apache HBase 2.6.0
 * Oracle BerkeleyJE 7.5.11
 * ScyllaDB 6.2.0
-* Elasticsearch 6.0.1, 6.6.0, 7.17.8, 8.15.3
+* Elasticsearch 6.0.1, 6.6.0, 7.17.8, 8.15.3, 9.0.3
 * Apache Lucene 8.11.1
 * Apache Solr 8.11.1
 * Apache TinkerPop 3.7.3
@@ -98,6 +98,270 @@ For more information on features and bug fixes in 1.2.0, see the GitHub mileston
 * [GitHub Release](https://github.com/JanusGraph/janusgraph/releases/tag/v1.2.0)
 * [JanusGraph zip](https://github.com/JanusGraph/janusgraph/releases/download/v1.2.0/janusgraph-1.2.0.zip)
 * [JanusGraph zip with embedded Cassandra and ElasticSearch](https://github.com/JanusGraph/janusgraph/releases/download/v1.2.0/janusgraph-full-1.2.0.zip)
+
+#### Upgrade Instructions
+
+##### Apache Cassandra 5.0 support
+
+Starting from version 1.2.0 JanusGraph supports Apache Cassandra 5.0 as a storage backend.
+Apache Cassandra 5.0 requires Java 11 or newer. Since the pre-packaged distribution still
+targets Java 8, it continues to bundle Cassandra 4.0.6; connect JanusGraph to an externally
+managed Cassandra 5.0 cluster (running on Java 11+) to use the new backend.
+
+##### ElasticSearch 9 support
+
+Starting from version 1.2.0 JanusGraph supports ElasticSearch 9.
+
+##### Zombie instances auto-close during index status update operations
+
+Starting from version 1.2.0 JanusGraph can automatically force-close JanusGraph instances that are unreachable
+during index status update operations.
+
+To enable this behavior, users can set the following configuration:
+```
+graph.management-auto-close-stale-instances=true
+```
+
+By default, an instance is considered stale if it is not reachable for more than 2 minutes. However, this 
+threshold can be adjusted using the following configuration:
+```
+graph.management-ack-timeout=240000 ms
+```
+This is a breaking change for users who use the `JanusGraphIndexStatusUpdate` interface.
+
+##### Faster mixed-index reindex with batched document restores
+
+Mixed-index reindex jobs (`SchemaAction.REINDEX` against an Elasticsearch, Solr or Lucene index) now
+flush restored documents to the index backend in bounded batches while the storage scan is still
+running, instead of buffering a whole scan segment and flushing it once. This reduces the number of
+bulk requests, transaction commits and management-system reads per reindexed element and bounds worker
+memory.
+
+This behavior is **enabled by default**. Two new configuration options control it:
+```
+schema.reindex.mixed-index-batch-enabled=true
+schema.reindex.mixed-index-batch-size=1000
+```
+`schema.reindex.mixed-index-batch-size` is the number of documents a reindex worker buffers before
+issuing a single `restore` (bulk) call. A worker buffers up to this many documents in memory and a
+reindex runs several workers in parallel, so peak heap grows with `mixed-index-batch-size` ×
+reindex-threads × average-document-size — raise it only when documents are small and workers have
+headroom.
+
+Be aware of the following behavior changes when batching is enabled (the default):
+
+-   Restored documents become visible in the index **incrementally**, as each batch is flushed, rather
+    than once per scan segment. This is safe because a reindex is idempotent and rebuilds index state
+    from the graph as the source of truth; a reindex interrupted partway leaves partially-populated
+    index documents that a re-run deterministically completes.
+-   The reindex flush cadence is now driven by `mixed-index-batch-size` rather than by the storage
+    page size (`storage.page-size`).
+
+To restore the previous storage-page-sized, flush-once-per-segment behavior, set
+`schema.reindex.mixed-index-batch-enabled=false`. See the
+[Elasticsearch reindex tuning guide](index-backend/elasticsearch.md#reindex-optimization) for tuning
+the batch size, reindex threads and `index.[X].bulk-refresh` together.
+
+##### Faster OLAP scans (signal-based row hand-off)
+
+The OLAP scan pipeline behind reindex and other scan jobs now hands rows between its internal threads
+using blocking `take()` and sentinel markers instead of polling bounded queues on a fixed timer. On
+fast backends (notably CQL/Cassandra) this removes per-row hand-off latency that could otherwise
+dominate scan wall-clock time, speeding up single-node reindex and other full scans by a large factor.
+No configuration or user action is required.
+
+##### Opt-in parallel token-range scan for CQL full scans
+
+CQL full-table scans (used by reindex and other OLAP jobs) can optionally be split into several
+token-bounded queries instead of a single coordinator-funneled scan:
+```
+storage.cql.parallel-scan-token-ranges=1
+```
+The default value `1` preserves the previous single-query behavior. When set above `1` and the Murmur3
+partitioner is in use, scan jobs (reindex and other jobs running through the scan-job framework) drain
+each token range on its own row-collection pipeline — its own data-puller threads and merge thread —
+so the storage scan runs fully in parallel across ranges and producer throughput scales with the range
+count until the cluster saturates. Non-scan-job callers of a whole-table scan receive the ranges as
+token-bounded queries streamed back-to-back in token order (bounded coordinator scans, without extra
+parallelism). Each range adds concurrent scan queries against the cluster (one per scan-job query,
+times the number of ranges), so very high values can overload the cluster; a small multiple of the
+cluster's node count is a sensible starting point. The option is ignored for non-Murmur3 partitioners.
+
+##### CQL scan-only page size
+
+Full-table scans can use their own CQL page size instead of the OLTP-oriented `storage.page-size`:
+```
+storage.cql.scan-page-size=0
+```
+The default `0` keeps using `storage.page-size`. Since a full scan streams many rows per request, a
+page size several times larger than the OLTP page size usually cuts scan round trips (and total scan
+time) substantially; a few thousand rows per page is a reasonable value. Scan pages are additionally
+fetched with a one-page lookahead, overlapping the network wait of the next page with client-side
+processing of the current one — this pipelining is always on and needs no configuration.
+
+##### PER PARTITION LIMIT pushdown for CQL scans
+
+Scan queries now push their per-key entry limit into the CQL query as `PER PARTITION LIMIT`
+(enabled by default):
+```
+storage.cql.scan-per-partition-limit-enabled=true
+```
+Scan jobs issue a grounding (key-existence) query with a per-key limit of 1; previously every cell of
+every row slice was streamed to the client and discarded there, so the grounding query alone
+transferred the whole table — including adjacency data irrelevant to the job. With the pushdown the
+server stops after the per-key limit (one cell per key for the grounding query), which substantially
+reduces scan time and network transfer on graphs with wide rows (many edges or properties per vertex).
+Requires `PER PARTITION LIMIT` support in the backend (Apache Cassandra 3.6+, ScyllaDB). A
+CQL-compatible service that rejects the clause (e.g. Amazon Keyspaces) automatically falls back to
+plain scan statements — store open logs a warning and continues instead of failing; set the option
+to `false` to skip the attempt entirely.
+
+##### Scan jobs fail loudly on data-puller errors
+
+Previously, when an internal scan data-puller thread died on a storage error, the scan completed
+"successfully" with silently missing rows — for a reindex this could ENABLE an incomplete index. A
+scan job now fails with a `TemporaryBackendException` describing the failed puller instead of
+returning a partial result, and it fails fast: the error surfaces as soon as the dead puller's
+end-of-data marker is observed rather than after the remaining key space has been streamed and
+discarded.
+
+##### Scan merge no longer loses data on writes concurrent with the scan
+
+The multi-query scan merge matches each secondary slice query's rows against the grounding
+(key-existence) stream. A key written while the scan runs can appear only in a secondary stream —
+the grounding puller had already passed its position — and such a row can never match. Previously
+it permanently occupied the merge's single pending slot for that query, so every later key was
+silently merged with empty results for the query: a reindex on a live graph produced documents
+missing that query's data for the rest of the scan. On backends whose scans iterate keys in their
+natural order the merge now classifies every row directly against the grounding key (a merge join),
+so stale rows are dropped outright; on token-ordered backends (such as CQL with the Murmur3
+partitioner), where that order is not computable client-side, a bounded per-query buffer of
+unmatched rows recovers by dropping the rows the grounding stream has provably passed. Keys written
+during the scan are unaffected either way: they are indexed by normal live-write index maintenance,
+never by the scan itself. Because the merge join is only sound on a scan that really iterates keys
+in their natural order, a multi-query scan now also verifies that promise against the stream as it
+is consumed and fails the scan if the store violates its declared key order, instead of silently
+dropping rows.
+
+##### CQL scans under the Murmur3 partitioner use the lossless merge join
+
+Cassandra's Murmur3 ring order — token first, key bytes among equal tokens — is now computed
+client-side through the driver's token factory (the same code token-aware routing relies on) and
+declared to the scan framework via the new `StoreFeatures#getScanKeyOrder()` hook. Multi-query CQL
+scans, including the split-parallel pipelines of `storage.cql.parallel-scan-token-ranges`, therefore
+merge with the lossless merge-join strategy instead of the bounded-buffer strategy, whose recovery
+from keys written concurrently with the scan is capped (a burst of more than 32 such keys between
+two matches of one query blanked that query's data for the keys behind the burst). The declared
+order is verified against every scan as it is consumed — the same tripwire that guards natural-order
+backends — so a client/server order mismatch fails the scan instead of silently dropping rows.
+Disabling the driver's token metadata (`storage.cql.metadata-token-map-enabled = false`) removes the
+declaration and restores the previous bounded-buffer merge; partitioners whose order the driver
+cannot compute (RandomPartitioner, Amazon Keyspaces' DefaultPartitioner) keep using it automatically.
+
+##### Scan progress logging
+
+`StandardScannerExecutor` now logs a start line (job, query count, processor count, collector type,
+queue capacity), a progress line every 30 seconds (rows produced by the storage scan, rows processed
+by workers, current rates, row-queue fill) and a completion summary (total rows, elapsed, average
+rate). The row-queue fill discriminates the bottleneck at a glance: a near-empty queue means the scan
+is storage-bound, a near-full queue means processing/index writes are the bottleneck. Per-puller
+counters are logged at `DEBUG` level, and mixed-index reindex jobs additionally report bulk-flush
+count/size/time through the custom scan metrics `mixed-index-flushes`, `mixed-index-flushed-docs` and
+`mixed-index-flush-time-ms`.
+
+##### Whole-row deletion on vertex removal (super-node tombstone reduction)
+
+Starting from version 1.2.0, when a vertex is removed JanusGraph deletes its entire storage row in a single
+operation on backends that support it (CQL/Cassandra issues one partition-level delete instead of one
+column delete per incident edge), drastically reducing tombstone pressure when removing super-nodes.
+
+This behavior is enabled by default. To restore the previous per-column deletion behavior, set:
+
+```
+storage.drop-whole-row-on-vertex-removal=false
+```
+
+##### Write-only index state (`WRITE_ONLY_ENABLED`) and reindexing without automatic enablement
+
+Starting from version 1.2.0 an index can be explicitly enabled for write operations only. A new schema status
+`SchemaStatus.WRITE_ONLY_ENABLED` and a new schema action `SchemaAction.ENABLE_WRITE_ONLY` were added. An index in
+the `WRITE_ONLY_ENABLED` state receives updates for all graph mutations but is not used to answer queries, and —
+in contrast to a `REGISTERED` index — `SchemaAction.REINDEX` preserves its state instead of automatically enabling
+the index. This enables the workflow *create index → reindex it (without enabling) → enable it later when necessary*
+as well as demoting an `ENABLED` index to write-only and re-enabling it later without a reindex. See
+[Index Lifecycle](schema/index-management/index-lifecycle.md) for the full state machine and workflows.
+
+The following behaviors were extended or clarified. None of them change the behavior of existing workflows:
+
+-   **Documentation clarification (no behavior change):** indexes in the `INSTALLED` and `REGISTERED` states have
+    always received updates for graph mutations; queries only ever use `ENABLED` indexes. Previous documentation
+    incorrectly stated that only `ENABLED` indexes receive updates. If you relied on the documented (incorrect)
+    behavior and want an index that receives no updates, disable it or use the new create-then-disable workflow
+    below.
+-   `SchemaAction.DISABLE_INDEX` can now also be applied to an `INSTALLED` or `WRITE_ONLY_ENABLED` index. Disabling
+    an index within the same management transaction that creates it yields an index definition that is known to the
+    cluster but never receives any writes until activated.
+-   `SchemaAction.REGISTER_INDEX` can now also be applied to a `DISABLED` index to re-activate it for writes.
+    Reaching the `REGISTERED` status guarantees that all instances write to the index, which makes a subsequent
+    reindex lossless.
+-   A pending index registration no longer overwrites a status change that superseded it. Previously, disabling an
+    index while its registration acknowledgment was still pending could result in the index being moved back to
+    `REGISTERED` once all acknowledgments arrived.
+-   `SchemaAction.REINDEX`, `SchemaAction.ENABLE_INDEX`, `SchemaAction.DISCARD_INDEX` and
+    `SchemaAction.MARK_DISCARDED` also accept indexes in the `WRITE_ONLY_ENABLED` state.
+
+Note for downgrades: the new status is persisted in the schema. Schemas containing indexes (or mixed-index keys) in
+the `WRITE_ONLY_ENABLED` state cannot be read by JanusGraph versions older than 1.2.0. Only start using
+`SchemaAction.ENABLE_WRITE_ONLY` after all JanusGraph instances of the cluster have been upgraded to 1.2.0 or newer.
+
+##### New action to remove stale index entries (`REMOVE_STALE_ENTRIES`)
+
+Starting from version 1.2.0 stale index entries — entries which reference graph elements that no longer exist, for
+example because the element was deleted while an index status change was still propagating through the cluster or
+while the index was disabled — can be removed with the new schema action `SchemaAction.REMOVE_STALE_ENTRIES`:
+
+```groovy
+mgmt = graph.openManagement()
+mgmt.updateIndex(mgmt.getGraphIndex("myIndex"), SchemaAction.REMOVE_STALE_ENTRIES).get()
+mgmt.commit()
+```
+
+The action complements `REINDEX`: a reindex restores missing entries for existing elements but never removes
+entries, while `REMOVE_STALE_ENTRIES` removes entries of deleted elements but never adds entries. The index status
+is not changed. The returned `ScanMetrics` report the number of removed entries under the custom metric
+`stale-entries-removed`. Previously such entries could only be removed one-by-one with the low-level
+`StaleIndexRecordUtil` helper (which required knowing the stale element ids and index record values upfront) or by
+dropping and rebuilding the whole index.
+
+Supported index types:
+
+-   **Composite graph indexes**: the internal index store is scanned and every entry whose element no longer exists
+    is deleted.
+-   **Mixed graph indexes**: the documents are enumerated through exists-queries against the index backend. This
+    requires at least one index field whose data type supports exists queries; fields that do not support them are
+    skipped with a warning.
+-   **Vertex-centric indexes** are not supported by this action.
+
+If custom vertex ids are used, avoid deleting and re-creating vertices under the same custom id while a
+`REMOVE_STALE_ENTRIES` job is running, because the job could remove the index entries of the re-created vertex
+(run `REINDEX` afterwards to restore them). With automatically assigned ids this race cannot occur because ids are
+never reused.
+
+##### CDC-based mixed index synchronization
+
+Starting from version 1.2.0, JanusGraph can keep mixed indexes (e.g. ElasticSearch) eventually consistent with the
+graph via Change-Data-Capture instead of a synchronous index write during the transaction that can diverge on failure
+(a cause of [permanent stale indexes](advanced-topics/stale-index.md)). This is opt-in and disabled by default.
+
+With Apache Cassandra storage, set `storage.cql.cdc=true` to create the `edgestore` table with Cassandra CDC enabled,
+mark the mixed index backend with `index.[X].cdc.enabled=true` (and `index.[X].cdc.synchronous=false` for cdc-only
+mode, which skips synchronous index additions; the few relation-document deletions that change events cannot
+identify remain synchronous), and run the new `janusgraph-cdc` worker. Like `storage.cql.cdc`, the
+`index.[X].cdc.*` options are managed cluster-wide (`GLOBAL_OFFLINE`): on an existing graph, change them via
+`mgmt.set(...)` while no other instance is open. The worker consumes the
+Cassandra change stream (e.g. via Debezium and Kafka) and reindexes affected elements from their current graph state,
+which is idempotent and order-independent. See
+[CDC Mixed Index Synchronization](advanced-topics/cdc-mixed-index.md) for the full setup.
 
 ### Version 1.1.0 (Release Date: November 7, 2024)
 

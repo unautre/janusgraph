@@ -14,8 +14,11 @@
 
 package org.janusgraph.diskstorage.keycolumnvalue;
 
+import org.janusgraph.diskstorage.StaticBuffer;
 import org.janusgraph.diskstorage.configuration.Configuration;
 import org.janusgraph.diskstorage.util.time.TimestampProviders;
+
+import java.util.Comparator;
 
 /**
  * Immutable, {@link Builder}-customizable implementation of StoreFeatures.
@@ -30,6 +33,7 @@ public class StandardStoreFeatures implements StoreFeatures {
     private final boolean batchMutation;
     private final boolean localKeyPartition;
     private final boolean keyOrdered;
+    private final Comparator<StaticBuffer> scanKeyOrder;
     private final boolean distributed;
     private final boolean transactional;
     private final boolean keyConsistent;
@@ -44,6 +48,7 @@ public class StandardStoreFeatures implements StoreFeatures {
     private final Configuration scanTxConfig;
     private final boolean supportsInterruption;
     private final boolean optimisticLocking;
+    private final boolean optimizedWholeRowDeletion;
 
     @Override
     public boolean hasScan() {
@@ -83,6 +88,11 @@ public class StandardStoreFeatures implements StoreFeatures {
     @Override
     public boolean isKeyOrdered() {
         return keyOrdered;
+    }
+
+    @Override
+    public Comparator<StaticBuffer> getScanKeyOrder() {
+        return scanKeyOrder;
     }
 
     @Override
@@ -159,6 +169,11 @@ public class StandardStoreFeatures implements StoreFeatures {
         return optimisticLocking;
     }
 
+    @Override
+    public boolean hasOptimizedWholeRowDeletion() {
+        return optimizedWholeRowDeletion;
+    }
+
     /**
      * The only way to instantiate {@link StandardStoreFeatures}.
      */
@@ -172,6 +187,7 @@ public class StandardStoreFeatures implements StoreFeatures {
         private boolean batchMutation;
         private boolean localKeyPartition;
         private boolean keyOrdered;
+        private Comparator<StaticBuffer> scanKeyOrder;
         private boolean distributed;
         private boolean transactional;
         private boolean timestamps;
@@ -186,6 +202,7 @@ public class StandardStoreFeatures implements StoreFeatures {
         private Configuration scanTxConfig;
         private boolean supportsInterruption = true;
         private boolean optimisticLocking;
+        private boolean optimizedWholeRowDeletion;
 
         /**
          * Construct a Builder with everything disabled/unsupported/false/null.
@@ -205,6 +222,7 @@ public class StandardStoreFeatures implements StoreFeatures {
             batchMutation(template.hasBatchMutation());
             localKeyPartition(template.hasLocalKeyPartition());
             keyOrdered(template.isKeyOrdered());
+            scanKeyOrder(template.getScanKeyOrder());
             distributed(template.isDistributed());
             transactional(template.hasTxIsolation());
             timestamps(template.hasTimestamps());
@@ -219,10 +237,16 @@ public class StandardStoreFeatures implements StoreFeatures {
             scanTxConfig(template.getScanTxConfig());
             supportsInterruption(template.supportsInterruption());
             optimisticLocking(template.hasOptimisticLocking());
+            optimizedWholeRowDeletion(template.hasOptimizedWholeRowDeletion());
         }
 
         public Builder optimisticLocking(boolean b) {
             optimisticLocking = b;
+            return this;
+        }
+
+        public Builder optimizedWholeRowDeletion(boolean b) {
+            optimizedWholeRowDeletion = b;
             return this;
         }
 
@@ -263,6 +287,12 @@ public class StandardStoreFeatures implements StoreFeatures {
 
         public Builder keyOrdered(boolean b) {
             keyOrdered = b;
+            return this;
+        }
+
+        /** See {@link StoreFeatures#getScanKeyOrder()}; null (the default) means not computable. */
+        public Builder scanKeyOrder(Comparator<StaticBuffer> order) {
+            scanKeyOrder = order;
             return this;
         }
 
@@ -339,24 +369,27 @@ public class StandardStoreFeatures implements StoreFeatures {
         public StandardStoreFeatures build() {
             return new StandardStoreFeatures(consistentScan, unorderedScan, orderedScan,
                     multiQuery, locking, batchMutation, localKeyPartition,
-                    keyOrdered, distributed, transactional, keyConsistent,
+                    keyOrdered, scanKeyOrder, distributed, transactional, keyConsistent,
                     timestamps, preferredTimestamps, cellLevelTTL,
                     storeLevelTTL, visibility, supportsPersist,
                     keyConsistentTxConfig,
-                    localKeyConsistentTxConfig, scanTxConfig, supportsInterruption, optimisticLocking);
+                    localKeyConsistentTxConfig, scanTxConfig, supportsInterruption, optimisticLocking,
+                    optimizedWholeRowDeletion);
         }
     }
 
     private StandardStoreFeatures(boolean consistentScan, boolean unorderedScan, boolean orderedScan,
                                   boolean multiQuery, boolean locking, boolean batchMutation,
-                                  boolean localKeyPartition, boolean keyOrdered, boolean distributed,
+                                  boolean localKeyPartition, boolean keyOrdered,
+                                  Comparator<StaticBuffer> scanKeyOrder, boolean distributed,
                                   boolean transactional, boolean keyConsistent,
                                   boolean timestamps, TimestampProviders preferredTimestamps,
                                   boolean cellLevelTTL, boolean storeLevelTTL,
                                   boolean visibility, boolean supportsPersist,
                                   Configuration keyConsistentTxConfig,
                                   Configuration localKeyConsistentTxConfig,
-                                  Configuration scanTxConfig, boolean supportsInterruption, boolean optimisticLocking) {
+                                  Configuration scanTxConfig, boolean supportsInterruption, boolean optimisticLocking,
+                                  boolean optimizedWholeRowDeletion) {
         this.consistentScan = consistentScan;
         this.unorderedScan = unorderedScan;
         this.orderedScan = orderedScan;
@@ -365,6 +398,7 @@ public class StandardStoreFeatures implements StoreFeatures {
         this.batchMutation = batchMutation;
         this.localKeyPartition = localKeyPartition;
         this.keyOrdered = keyOrdered;
+        this.scanKeyOrder = scanKeyOrder;
         this.distributed = distributed;
         this.transactional = transactional;
         this.keyConsistent = keyConsistent;
@@ -379,5 +413,6 @@ public class StandardStoreFeatures implements StoreFeatures {
         this.scanTxConfig = scanTxConfig;
         this.supportsInterruption = supportsInterruption;
         this.optimisticLocking = optimisticLocking;
+        this.optimizedWholeRowDeletion = optimizedWholeRowDeletion;
     }
 }

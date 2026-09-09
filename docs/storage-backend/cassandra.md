@@ -21,6 +21,14 @@ With Cassandra 4.0, Thrift support will be removed in Cassandra.
 JanusGraph just supports the CQL storage backend.
 
 !!! note
+    The CQL backend is integration tested against Apache Cassandra 3.11,
+    4.0 and 5.0 (with both the Murmur3 and ByteOrdered partitioners). The
+    DataStax Java driver used by JanusGraph negotiates the native protocol
+    automatically, and table creation adapts the `compression` options to
+    the format expected by the detected Cassandra major version, so no
+    configuration changes are required when moving between these versions.
+
+!!! note
     If security is enabled on Cassandra, the user must have
     `CREATE permission on <all keyspaces>`, otherwise the keyspace must be
     created ahead of time by an administrator including the required
@@ -177,6 +185,15 @@ CQL specific configuration options:
 More information on Cassandra consistency levels and acceptable
 values can be found [here](https://docs.datastax.com/en/cassandra-oss/3.x/cassandra/dml/dmlDataConsistencyTOC.html).
 In general, higher levels are more consistent and robust but have higher latency.
+
+### Super-node deletion (whole-row delete)
+
+Removing a vertex with many incident edges previously issued one column-level `DELETE` per edge on the
+vertex's partition, creating a large number of cell tombstones that can overwhelm reads on that partition.
+As of 1.2.0, when a vertex is removed JanusGraph instead issues a single partition-level
+`DELETE ... WHERE key = ?`, producing one tombstone for the whole partition. This is controlled by
+`storage.drop-whole-row-on-vertex-removal` (default `true`). Set it to `false` to restore the previous
+per-column behavior.
 
 ## Global Graph Operations
 
